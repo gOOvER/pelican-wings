@@ -11,54 +11,53 @@ on:
 jobs:
   build-and-test:
     name: Build and Test
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04]
-        go: ["1.23.7", "1.24.1"]
-        goos: [linux]
+        go: ["1.23.7", "1.24.1", "stable"]   # fixed versions + latest stable
         goarch: [amd64, arm64]
 
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go }}
+          cache: true   # enable Go module caching
 
-      - name: Code checkout
-        uses: actions/checkout@v4
+      - name: Download dependencies
+        run: go mod download
 
-      - name: go mod download
+      - name: Build binaries
         env:
-          CGO_ENABLED: 0
-        run: |
-          go mod download
-
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
+          GOOS: linux
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
           SRC_PATH: github.com/pelican-dev/wings
+          VERSION: dev-${{ github.sha::7 }}
         run: |
-          go build -v -trimpath -ldflags="-s -w -X ${SRC_PATH}/system.Version=dev-${GITHUB_SHA:0:7}" -o dist/wings ${SRC_PATH}
-          go build -v -trimpath -ldflags="-X ${SRC_PATH}/system.Version=dev-${GITHUB_SHA:0:7}" -o dist/wings_debug ${SRC_PATH}
+          mkdir -p dist
+          # Release build (stripped binary, smaller size)
+          go build -v -trimpath \
+            -ldflags="-s -w -X ${SRC_PATH}/system.Version=$VERSION" \
+            -o dist/wings ${SRC_PATH}
+          # Debug build (keeps debug symbols)
+          go build -v -trimpath \
+            -ldflags="-X ${SRC_PATH}/system.Version=$VERSION" \
+            -o dist/wings_debug ${SRC_PATH}
           chmod 755 dist/*
 
-      - name: go test
+      - name: Run tests
         if: ${{ matrix.goarch == 'amd64' }}
-        env:
-          CGO_ENABLED: 0
-        run: |
-          go test $(go list ./...)
+        run: go test ./...
 
-      - name: go test -race
+      - name: Run race detector
         if: ${{ matrix.goarch == 'amd64' }}
         env:
           CGO_ENABLED: 1
-        run: |
-          go test -race $(go list ./...)
+        run: go test -race ./...
 
       - name: Upload Release Artifact
         uses: actions/upload-artifact@v4
