@@ -8,35 +8,37 @@ on:
     branches:
       - main
   schedule:
-    - cron: "0 9 * * 4"
+    - cron: "0 9 * * 4"   # every Thursday at 09:00 UTC
 
 jobs:
   analyze:
     name: Analyze
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     permissions:
       actions: read
       contents: read
       security-events: write
 
-    strategy:
-      fail-fast: false
-      matrix:
-        language:
-          - go
-
     steps:
-      - name: Code Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for CodeQL
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
-          languages: ${{ matrix.language }}
+          languages: go
+          # If you want to add queries:
+          # queries: security-extended,security-and-quality
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@v3
+        # For Go projects with custom build steps, replace with:
+        # run: go build ./...
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:go"
