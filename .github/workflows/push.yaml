@@ -28,6 +28,10 @@ jobs:
           go-version: ${{ matrix.go }}
           cache: true   # enable Go module caching
 
+      - name: Extract short SHA
+        id: vars
+        run: echo "short_sha=$(echo $GITHUB_SHA | cut -c1-7)" >> $GITHUB_OUTPUT
+
       - name: Download dependencies
         run: go mod download
 
@@ -36,16 +40,15 @@ jobs:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
           SRC_PATH: github.com/pelican-dev/wings
-          VERSION: dev-${{ github.sha::7 }}
         run: |
           mkdir -p dist
-          # Release build (stripped binary, smaller size)
+          # Release build (stripped binary)
           go build -v -trimpath \
-            -ldflags="-s -w -X ${SRC_PATH}/system.Version=$VERSION" \
+            -ldflags="-s -w -X ${SRC_PATH}/system.Version=dev-${{ steps.vars.outputs.short_sha }}" \
             -o dist/wings ${SRC_PATH}
-          # Debug build (keeps debug symbols)
+          # Debug build (with debug symbols)
           go build -v -trimpath \
-            -ldflags="-X ${SRC_PATH}/system.Version=$VERSION" \
+            -ldflags="-X ${SRC_PATH}/system.Version=dev-${{ steps.vars.outputs.short_sha }}" \
             -o dist/wings_debug ${SRC_PATH}
           chmod 755 dist/*
 
