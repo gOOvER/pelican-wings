@@ -1,6 +1,6 @@
 # Changelog
 
-test action
+test actions
 
 
 ## v1.11.11
