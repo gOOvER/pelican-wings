@@ -30,12 +30,16 @@ type ResourceUsage struct {
 // a copy of the tracked resources, so making any changes to the response will not
 // have the desired outcome for you most likely.
 func (s *Server) Proc() ResourceUsage {
-	s.resources.mu.Lock()
-	defer s.resources.mu.Unlock()
+	s.resources.mu.RLock()
+	defer s.resources.mu.RUnlock()
 	// Store the updated disk usage when requesting process usage.
 	atomic.StoreInt64(&s.resources.Disk, s.Filesystem().CachedUsage())
-	//goland:noinspection GoVetCopyLock
-	return s.resources
+	// Create a safe copy without copying the mutex
+	return ResourceUsage{
+		Stats: s.resources.Stats,
+		State: s.resources.State,
+		Disk:  s.resources.Disk,
+	}
 }
 
 // UpdateStats updates the current stats for the server's resource usage.

@@ -163,11 +163,10 @@ func ByID(dlid string) *Download {
 	return instance.find(dlid)
 }
 
-//goland:noinspection GoVetCopyLock
-func (dl Download) MarshalJSON() ([]byte, error) {
+func (dl *Download) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
-		Identifier string
-		Progress   float64
+		Identifier string  `json:"identifier"`
+		Progress   float64 `json:"progress"`
 	}{
 		Identifier: dl.Identifier,
 		Progress:   dl.Progress(),
