@@ -398,16 +398,13 @@ func (f *ConfigurationFile) parseJsonFile(file ufs.File) error {
 		return err
 	}
 
-	// Use IterateOverJson to apply replacements with gabs
 	data, err := f.IterateOverJson(b)
 	if err != nil {
 		return err
 	}
 
-	// Rebuild JSON preserving original key order
 	output, err := f.rebuildJSONWithOriginalOrder(b, data.Data())
 	if err != nil {
-		// Fallback to standard marshal if order preservation fails
 		output, err = json.MarshalIndent(data.Data(), "", "  ")
 		if err != nil {
 			return errors.Wrap(err, "parser: failed to marshal json data")
@@ -421,40 +418,32 @@ func (f *ConfigurationFile) parseJsonFile(file ufs.File) error {
 		return err
 	}
 
-	// Write the data to the file.
 	if _, err := io.Copy(file, bytes.NewReader(output)); err != nil {
 		return errors.Wrap(err, "parser: failed to write json file to disk")
 	}
 	return nil
 }
 
-// rebuildJSONWithOriginalOrder rebuilds JSON preserving the original key order
 func (f *ConfigurationFile) rebuildJSONWithOriginalOrder(originalData []byte, updatedData interface{}) ([]byte, error) {
 	var buf bytes.Buffer
 
-	// Start recursive rebuild
 	if err := f.buildJSONRecursive(&buf, originalData, updatedData, 0); err != nil {
 		return nil, err
 	}
 
 	return buf.Bytes(), nil
 }
-
-// buildJSONRecursive recursively builds JSON while preserving key order
 func (f *ConfigurationFile) buildJSONRecursive(buf *bytes.Buffer, originalData []byte, updatedData interface{}, depth int) error {
 	indent := strings.Repeat("  ", depth)
 	nextIndent := strings.Repeat("  ", depth+1)
 
-	// Get the updated map
 	updatedMap, ok := updatedData.(map[string]interface{})
 	if !ok {
-		// Not a map, just marshal normally
 		jsonBytes, _ := json.Marshal(updatedData)
 		buf.Write(jsonBytes)
 		return nil
 	}
 
-	// Parse original to get key order
 	var keyOrder []string
 	jsonparser.ObjectEach(originalData, func(key []byte, _ []byte, _ jsonparser.ValueType, _ int) error {
 		keyOrder = append(keyOrder, string(key))
