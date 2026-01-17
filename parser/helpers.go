@@ -2,6 +2,7 @@ package parser
 
 import (
 	"bytes"
+	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
@@ -51,6 +52,199 @@ func (cfr *ConfigurationFileReplacement) getKeyValue(value string) interface{} {
 	return value
 }
 
+// UpdateJsonPreservingStructure updates JSON values while preserving the original structure and key order.
+// UpdateJsonPreservingStructure updates JSON values while preserving the original structure and key order.
+func (f *ConfigurationFile) UpdateJsonPreservingStructure(data []byte) ([]byte, error) {
+	// Parse JSON into a map to track which values need to be changed
+	var obj map[string]interface{}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return data, err
+	}
+
+	// Apply replacements to the parsed object
+	for _, v := range f.Replace {
+		value, err := f.LookupConfigurationValue(v)
+		if err != nil {
+			return nil, err
+		}
+
+		// Handle wildcard matches
+		if strings.Contains(v.Match, ".*") {
+			parts := strings.SplitN(v.Match, ".*", 2)
+			basePath := strings.Trim(parts[0], ".")
+			subPath := strings.Trim(parts[1], ".")
+			f.applyWildcardReplacementToMap(obj, basePath, subPath, value)
+			continue
+		}
+
+		// Direct replacement without wildcards
+		keyPath := strings.Split(v.Match, ".")
+		f.setValueInMap(obj, keyPath, value)
+	}
+
+	// Rebuild JSON while preserving original key order
+	return f.rebuildJSONPreservingOrder(data, obj)
+}
+
+// setValueInMap sets a value in a nested map structure
+func (f *ConfigurationFile) setValueInMap(obj map[string]interface{}, keyPath []string, value interface{}) {
+	if len(keyPath) == 0 {
+		return
+	}
+
+	current := obj
+	for i := 0; i < len(keyPath)-1; i++ {
+		key := keyPath[i]
+		if val, exists := current[key]; exists {
+			if nextMap, ok := val.(map[string]interface{}); ok {
+				current = nextMap
+			} else {
+				return
+			}
+		} else {
+			return
+		}
+	}
+
+	current[keyPath[len(keyPath)-1]] = value
+}
+
+// applyWildcardReplacementToMap applies wildcard replacements
+func (f *ConfigurationFile) applyWildcardReplacementToMap(obj map[string]interface{}, basePath, subPath string, value interface{}) {
+	pathParts := strings.Split(basePath, ".")
+	current := obj
+
+	for _, part := range pathParts {
+		if val, exists := current[part]; exists {
+			if nextMap, ok := val.(map[string]interface{}); ok {
+				current = nextMap
+			} else {
+				return
+			}
+		} else {
+			return
+		}
+	}
+
+	for _, v := range current {
+		if itemMap, ok := v.(map[string]interface{}); ok {
+			f.setValueInMap(itemMap, strings.Split(subPath, "."), value)
+		}
+	}
+}
+
+// rebuildJSONPreservingOrder extracts key order from original and rebuilds JSON
+func (f *ConfigurationFile) rebuildJSONPreservingOrder(originalData []byte, updatedValues map[string]interface{}) ([]byte, error) {
+	// Use a different approach: decode the original JSON while preserving formatting
+	// and only update the values we need to change
+
+	// Build the JSON from scratch with proper structure
+	// Simply marshal the updated values - gabs already has correct data
+	// Re-parse with gabs to ensure correct nesting
+	parsed, err := gabs.ParseJSON(originalData)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply our updates
+	for key, val := range updatedValues {
+		parsed.Set(val, key)
+	}
+
+	// Now we need to preserve key order from original
+	// Use a custom approach with jsonparser to maintain order
+	return preserveOriginalJSONOrder(originalData, parsed.Data())
+}
+
+// preserveOriginalJSONOrder uses the original JSON structure and order as a template
+func preserveOriginalJSONOrder(originalData []byte, updatedData interface{}) ([]byte, error) {
+	updatedMap, ok := updatedData.(map[string]interface{})
+	if !ok {
+		return json.MarshalIndent(updatedData, "", "  ")
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("{\n")
+
+	// Extract key order from original - depth 1 only
+	var topLevelKeys []string
+	jsonparser.ObjectEach(originalData, func(key []byte, value []byte, _ jsonparser.ValueType, _ int) error {
+		topLevelKeys = append(topLevelKeys, string(key))
+		return nil
+	})
+
+	firstKey := true
+	seen := make(map[string]bool)
+
+	for _, key := range topLevelKeys {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		if val, exists := updatedMap[key]; exists {
+			if !firstKey {
+				buf.WriteString(",\n")
+			}
+			firstKey = false
+
+			// Write key
+			buf.WriteString("  \"")
+			buf.WriteString(key)
+			buf.WriteString("\": ")
+
+			// Write value - handle nested objects/arrays recursively
+			valJSON, _ := json.MarshalIndent(val, "  ", "  ")
+			buf.Write(valJSON)
+		}
+	}
+
+	buf.WriteString("\n}\n")
+	return buf.Bytes(), nil
+}
+
+// buildJSONFromOrderedKeys builds JSON with keys in specified order
+func buildJSONFromOrderedKeys(keyOrder []string, values map[string]interface{}, originalData []byte) []byte {
+	var buf bytes.Buffer
+	buf.WriteString("{\n")
+
+	seen := make(map[string]bool)
+	firstKey := true
+
+	for _, key := range keyOrder {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		if val, exists := values[key]; exists {
+			if !firstKey {
+				buf.WriteString(",\n")
+			}
+			firstKey = false
+
+			// Write key
+			keyBytes, _ := json.Marshal(key)
+			buf.Write(keyBytes)
+			buf.WriteString(": ")
+
+			// Write value with proper indentation
+			valBytes, _ := json.MarshalIndent(val, "", "  ")
+			// Re-indent to 2 spaces
+			lines := strings.Split(string(valBytes), "\n")
+			for i, line := range lines {
+				if i > 0 {
+					buf.WriteString("\n  ")
+				}
+				buf.WriteString(line)
+			}
+		}
+	}
+
+	buf.WriteString("\n}")
+	return buf.Bytes()
+}
+
 // Iterate over an unstructured JSON/YAML/etc. interface and set all of the required
 // key/value pairs for the configuration file.
 //
@@ -60,6 +254,7 @@ func (cfr *ConfigurationFileReplacement) getKeyValue(value string) interface{} {
 // adjustments to the bind address for the user.
 //
 // This does not currently support nested wildcard matches. For example, foo.*.bar
+
 // will work, however foo.*.bar.*.baz will not, since we'll only be splitting at the
 // first wildcard, and not subsequent ones.
 func (f *ConfigurationFile) IterateOverJson(data []byte) (*gabs.Container, error) {

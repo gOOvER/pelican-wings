@@ -318,10 +318,6 @@ func (f *ConfigurationFile) parseIniFile(file ufs.File) error {
 		return err
 	}
 
-	// Force format to be key = value
-	ini.PrettyFormat = false
-	ini.PrettyEqual = true
-
 	for _, replacement := range f.Replace {
 		var (
 			path         []string
@@ -402,9 +398,20 @@ func (f *ConfigurationFile) parseJsonFile(file ufs.File) error {
 		return err
 	}
 
+	// Use IterateOverJson to apply replacements with gabs
 	data, err := f.IterateOverJson(b)
 	if err != nil {
 		return err
+	}
+
+	// Rebuild JSON preserving original key order
+	output, err := f.rebuildJSONWithOriginalOrder(b, data.Data())
+	if err != nil {
+		// Fallback to standard marshal if order preservation fails
+		output, err = json.MarshalIndent(data.Data(), "", "  ")
+		if err != nil {
+			return errors.Wrap(err, "parser: failed to marshal json data")
+		}
 	}
 
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
@@ -415,9 +422,149 @@ func (f *ConfigurationFile) parseJsonFile(file ufs.File) error {
 	}
 
 	// Write the data to the file.
-	if _, err := io.Copy(file, bytes.NewReader(data.BytesIndent("", "    "))); err != nil {
-		return errors.Wrap(err, "parser: failed to write properties file to disk")
+	if _, err := io.Copy(file, bytes.NewReader(output)); err != nil {
+		return errors.Wrap(err, "parser: failed to write json file to disk")
 	}
+	return nil
+}
+
+// rebuildJSONWithOriginalOrder rebuilds JSON preserving the original key order
+func (f *ConfigurationFile) rebuildJSONWithOriginalOrder(originalData []byte, updatedData interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+
+	// Start recursive rebuild
+	if err := f.buildJSONRecursive(&buf, originalData, updatedData, 0); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// buildJSONRecursive recursively builds JSON while preserving key order
+func (f *ConfigurationFile) buildJSONRecursive(buf *bytes.Buffer, originalData []byte, updatedData interface{}, depth int) error {
+	indent := strings.Repeat("  ", depth)
+	nextIndent := strings.Repeat("  ", depth+1)
+
+	// Get the updated map
+	updatedMap, ok := updatedData.(map[string]interface{})
+	if !ok {
+		// Not a map, just marshal normally
+		jsonBytes, _ := json.Marshal(updatedData)
+		buf.Write(jsonBytes)
+		return nil
+	}
+
+	// Parse original to get key order
+	var keyOrder []string
+	jsonparser.ObjectEach(originalData, func(key []byte, _ []byte, _ jsonparser.ValueType, _ int) error {
+		keyOrder = append(keyOrder, string(key))
+		return nil
+	})
+
+	buf.WriteString("{\n")
+
+	firstKey := true
+	seen := make(map[string]bool)
+
+	for _, key := range keyOrder {
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+
+		if val, exists := updatedMap[key]; exists {
+			if !firstKey {
+				buf.WriteString(",\n")
+			}
+			firstKey = false
+
+			buf.WriteString(nextIndent)
+			buf.WriteString("\"")
+			buf.WriteString(key)
+			buf.WriteString("\": ")
+
+			// Handle nested objects and arrays
+			switch v := val.(type) {
+			case map[string]interface{}:
+				// Check if map is empty
+				if len(v) == 0 {
+					buf.WriteString("{}")
+				} else {
+					// Get the original nested object to preserve its order
+					origNested, _, _, _ := jsonparser.Get(originalData, key)
+					if len(origNested) > 0 {
+						f.buildJSONRecursive(buf, origNested, v, depth+1)
+					} else {
+						f.buildJSONRecursiveForMap(buf, v, depth+1)
+					}
+				}
+			case []interface{}:
+				// Check if array is empty
+				if len(v) == 0 {
+					buf.WriteString("[]")
+				} else {
+					// Arrays can be marshaled normally as order doesn't matter
+					jsonBytes, _ := json.MarshalIndent(v, nextIndent, "  ")
+					buf.Write(jsonBytes)
+				}
+			default:
+				// Primitives: marshal normally
+				jsonBytes, _ := json.Marshal(v)
+				buf.Write(jsonBytes)
+			}
+		}
+	}
+
+	buf.WriteString("\n")
+	buf.WriteString(indent)
+	buf.WriteString("}")
+
+	return nil
+}
+
+// buildJSONRecursiveForMap builds JSON for a map without original data
+func (f *ConfigurationFile) buildJSONRecursiveForMap(buf *bytes.Buffer, data map[string]interface{}, depth int) error {
+	indent := strings.Repeat("  ", depth)
+	nextIndent := strings.Repeat("  ", depth+1)
+
+	buf.WriteString("{\n")
+
+	firstKey := true
+	for key, val := range data {
+		if !firstKey {
+			buf.WriteString(",\n")
+		}
+		firstKey = false
+
+		buf.WriteString(nextIndent)
+		buf.WriteString("\"")
+		buf.WriteString(key)
+		buf.WriteString("\": ")
+
+		switch v := val.(type) {
+		case map[string]interface{}:
+			if len(v) == 0 {
+				buf.WriteString("{}")
+			} else {
+				f.buildJSONRecursiveForMap(buf, v, depth+1)
+			}
+		case []interface{}:
+			if len(v) == 0 {
+				buf.WriteString("[]")
+			} else {
+				jsonBytes, _ := json.MarshalIndent(v, nextIndent, "  ")
+				buf.Write(jsonBytes)
+			}
+		default:
+			jsonBytes, _ := json.Marshal(v)
+			buf.Write(jsonBytes)
+		}
+	}
+
+	buf.WriteString("\n")
+	buf.WriteString(indent)
+	buf.WriteString("}")
+
 	return nil
 }
 
