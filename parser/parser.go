@@ -200,12 +200,7 @@ func (cfr *ConfigurationFileReplacement) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Parse parses a given configuration file and updates all the values within
-// as defined in the API response from the Panel.
 func (f *ConfigurationFile) Parse(file ufs.File) error {
-	//log.WithField("path", path).WithField("parser", f.Parser.String()).Debug("parsing server configuration file")
-
-	// What the fuck is going on here?
 	if mb, err := json.Marshal(config.Get()); err != nil {
 		return err
 	} else {
@@ -231,15 +226,12 @@ func (f *ConfigurationFile) Parse(file ufs.File) error {
 	return err
 }
 
-// Parses an xml file.
 func (f *ConfigurationFile) parseXmlFile(file ufs.File) error {
 	doc := etree.NewDocument()
 	if _, err := doc.ReadFrom(file); err != nil {
 		return err
 	}
 
-	// If there is no root we should create a basic start to the file. This isn't required though,
-	// and if it doesn't work correctly I'll just remove the code.
 	if doc.Root() == nil {
 		doc.CreateProcInst("xml", `version="1.0" encoding="utf-8"`)
 	}
@@ -250,8 +242,6 @@ func (f *ConfigurationFile) parseXmlFile(file ufs.File) error {
 			return err
 		}
 
-		// If this is the first item and there is no root element, create that root now and apply
-		// it for future use.
 		if i == 0 && doc.Root() == nil {
 			parts := strings.SplitN(replacement.Match, ".", 2)
 			doc.SetRoot(doc.CreateElement(parts[0]))
@@ -259,12 +249,9 @@ func (f *ConfigurationFile) parseXmlFile(file ufs.File) error {
 
 		path := "./" + strings.Replace(replacement.Match, ".", "/", -1)
 
-		// If we're not doing a wildcard replacement go ahead and create the
-		// missing element if we cannot find it yet.
 		if !strings.Contains(path, "*") {
 			parts := strings.Split(replacement.Match, ".")
 
-			// Set the initial element to be the root element, and then work from there.
 			element := doc.Root()
 
 			// Iterate over the path to create the required structure for the given element's path.
@@ -300,10 +287,8 @@ func (f *ConfigurationFile) parseXmlFile(file ufs.File) error {
 		return err
 	}
 
-	// Ensure the XML is indented properly.
 	doc.Indent(2)
 
-	// Write the XML to the file.
 	if _, err := doc.WriteTo(file); err != nil {
 		return err
 	}
@@ -312,7 +297,6 @@ func (f *ConfigurationFile) parseXmlFile(file ufs.File) error {
 
 // Parses an ini file.
 func (f *ConfigurationFile) parseIniFile(file ufs.File) error {
-	// Wrap the file in a NopCloser so the ini package doesn't close the file.
 	cfg, err := ini.Load(io.NopCloser(file))
 	if err != nil {
 		return err
@@ -350,14 +334,11 @@ func (f *ConfigurationFile) parseIniFile(file ufs.File) error {
 
 		k := path[0]
 		s := cfg.Section("")
-		// Passing a key of foo.bar will look for "bar" in the "[foo]" section of the file.
 		if len(path) == 2 {
 			k = path[1]
 			s = cfg.Section(path[0])
 		}
 
-		// If no section was found, create that new section now and then set the
-		// section value we're using to be the new one.
 		if s == nil {
 			s, err = cfg.NewSection(path[0])
 			if err != nil {
@@ -365,8 +346,6 @@ func (f *ConfigurationFile) parseIniFile(file ufs.File) error {
 			}
 		}
 
-		// If the key exists in the file go ahead and set the value, otherwise try to
-		// create it in the section.
 		if s.HasKey(k) {
 			s.Key(k).SetValue(value)
 		} else {
@@ -389,9 +368,6 @@ func (f *ConfigurationFile) parseIniFile(file ufs.File) error {
 	return nil
 }
 
-// Parses a json file updating any matching key/value pairs. If a match is not found, the
-// value is set regardless in the file. See the commentary in parseYamlFile for more details
-// about what is happening during this process.
 func (f *ConfigurationFile) parseJsonFile(file ufs.File) error {
 	b, err := io.ReadAll(file)
 	if err != nil {
@@ -472,14 +448,11 @@ func (f *ConfigurationFile) buildJSONRecursive(buf *bytes.Buffer, originalData [
 			buf.WriteString(key)
 			buf.WriteString("\": ")
 
-			// Handle nested objects and arrays
 			switch v := val.(type) {
 			case map[string]interface{}:
-				// Check if map is empty
 				if len(v) == 0 {
 					buf.WriteString("{}")
 				} else {
-					// Get the original nested object to preserve its order
 					origNested, _, _, _ := jsonparser.Get(originalData, key)
 					if len(origNested) > 0 {
 						f.buildJSONRecursive(buf, origNested, v, depth+1)
@@ -488,16 +461,13 @@ func (f *ConfigurationFile) buildJSONRecursive(buf *bytes.Buffer, originalData [
 					}
 				}
 			case []interface{}:
-				// Check if array is empty
 				if len(v) == 0 {
 					buf.WriteString("[]")
 				} else {
-					// Arrays can be marshaled normally as order doesn't matter
 					jsonBytes, _ := json.MarshalIndent(v, nextIndent, "  ")
 					buf.Write(jsonBytes)
 				}
 			default:
-				// Primitives: marshal normally
 				jsonBytes, _ := json.Marshal(v)
 				buf.Write(jsonBytes)
 			}
@@ -511,7 +481,6 @@ func (f *ConfigurationFile) buildJSONRecursive(buf *bytes.Buffer, originalData [
 	return nil
 }
 
-// buildJSONRecursiveForMap builds JSON for a map without original data
 func (f *ConfigurationFile) buildJSONRecursiveForMap(buf *bytes.Buffer, data map[string]interface{}, depth int) error {
 	indent := strings.Repeat("  ", depth)
 	nextIndent := strings.Repeat("  ", depth+1)
