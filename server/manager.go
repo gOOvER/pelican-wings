@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 
@@ -150,11 +151,27 @@ func (m *Manager) PersistStates() error {
 	for _, s := range m.All() {
 		states[s.ID()] = s.Environment.State()
 	}
-	data, err := json.Marshal(states)
-	if err != nil {
-		return errors.WithStack(err)
+	
+	// Sort the keys to ensure consistent ordering in the JSON output
+	keys := make([]string, 0, len(states))
+	for k := range states {
+		keys = append(keys, k)
 	}
-	if err := os.WriteFile(config.Get().System.GetStatesPath(), data, 0o644); err != nil {
+	sort.Strings(keys)
+	
+	// Build JSON string manually with sorted keys for consistent output
+	var b []byte
+	b = append(b, "{\n"...)
+	for i, k := range keys {
+		b = append(b, fmt.Sprintf(`    "%s": "%s"`, k, states[k])...)
+		if i < len(keys)-1 {
+			b = append(b, ',')
+		}
+		b = append(b, '\n')
+	}
+	b = append(b, '}')
+	
+	if err := os.WriteFile(config.Get().System.GetStatesPath(), b, 0o644); err != nil {
 		return errors.WithStack(err)
 	}
 	return nil
